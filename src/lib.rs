@@ -1,8 +1,9 @@
 #![feature(byte_slice_trim_ascii)]
+use core::panicking::panic;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, BufReader, Seek, SeekFrom, BufRead};
-use std::str;
+use std::{str, vec};
 
 const REQUIRED_3_1_KEYWORDS: [&str; 16] = [
     "$BEGINANALYSIS", // byte-offset to the beginning of analysis segment
@@ -38,17 +39,16 @@ pub struct Header {
     pub analysis_end: u64,
 }
 
-pub struct Metadata {
-    pub fcs_version: String,
-    pub begins_supplemental_txt: u32,
-    pub ends_supplemental_txt: u32
-
+#[derive(Debug, Clone, Default)]
+pub struct Parameter {
+    name: String,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct TextSegment {
+pub struct Metadata {
     pub delimitter: u8,
-    pub keywords_values: HashMap<String, String>
+    pub keywords: Vec<String>,
+    pub kv: HashMap<String, String>
 }
 
 /*
@@ -70,7 +70,14 @@ pub fn read_fcs(file_name: &str) -> Result<(), io::Error> {
     let file = File::open(&file_name)?;
     let header = read_header(&file)?;
     let metadata = read_metadata(&file, header.txt_start, header.txt_end)?;
-    //let data = read_data(header.data_start, header.data_end);
+    let data_start = metadata.kv.get("$BEGINDATA");
+    let data_end = metadata.kv.get("$ENDDATA");
+    let byte_ord = metadata.kv.get("$BYTEORD");
+    let data_type = metadata.kv.get("$DATATYPE");
+    let num_params = metadata.kv.get("$PAR");
+    let num_events = metadata.kv.get("$TOT");
+    
+    //let data = read_data(header.data_end);
     //let analysis = read_analysis(header.analysis_start, header.analysis_end);
     /*
     return FlowData{
@@ -122,57 +129,121 @@ pub fn read_header(file: &File) -> Result<Header, io::Error> {
         data_end: offsets[3],
         analysis_start: offsets[4],
         analysis_end: offsets[5]
-    })
+    }) 
 }
 
-pub fn read_metadata(file: &File, start: u64, end: u64) -> Result<TextSegment, io::Error> {
+pub fn read_metadata(file: &File, start: u64, end: u64) -> Result<Metadata, io::Error> {
     let mut reader = BufReader::new(file);
-    let mut text_segment: TextSegment = Default::default();
+    let mut text_segment: Metadata = Default::default();
 
     reader.seek(SeekFrom::Start(start))?;
 
-    let mut delimitter: [u8; 1] = [0;1];
-    reader.read_exact(&mut delimitter)?;
-    text_segment.delimitter = delimitter[0];
+    let mut _delimitter = [0u8;1];
+    reader.read_exact(&mut _delimitter)?;
+    text_segment.delimitter = _delimitter[0];
+    let mut next_char = [0u8, 1];
+    let mut partial_value: Vec<u8> = Vec::new();
+    let mut previous_stream_position: u64;
     
     while reader.stream_position()? < end {
         let mut keyword: Vec<u8> = Vec::new();
         let mut value: Vec<u8> = Vec::new();
+        // read keyword
         reader.read_until(text_segment.delimitter, &mut keyword)?;
-        reader.read_until(text_segment.delimitter, &mut value)?;
+        // read value
+        loop {
+            reader.read_until(text_segment.delimitter, &mut partial_value)?;
+            value.append(&mut partial_value);
+            previous_stream_position = reader.stream_position()?;
+            reader.read_exact(&mut next_char)?;
 
-        if keyword[keyword.len()-1] != text_segment.delimitter || value[value.len()-1] != text_segment.delimitter {
-            panic!("File or parser is corrupt, {}, {}", keyword[keyword.len()-1], value[value.len()-1]);
+            // if delimiter is not for escaping,
+            // go to previous stream position and stop the value reading loop
+            if next_char[0] != text_segment.delimitter {
+                reader.seek(SeekFrom::Start(previous_stream_position))?;
+                break;
+            }
         }
 
-        let keyword_clean = str::from_utf8(&keyword[..keyword.len()-1]);
-
-        let keyword_clean_push = match keyword_clean {
-            Ok(keyword) => keyword,
-            Err(_) => break,
-        };
-            
-        let value_clean = str::from_utf8(&value[..value.len()-1]);
-
-        let value_clean_push = match value_clean {
-            Ok(value) => value,
-            Err(_) => break,
-        };
-
-        text_segment.keywords_values.insert(keyword_clean_push.to_string(), value_clean_push.to_string());
+        let keyword_value_pair = clean_keyword_value_pair(keyword, value, text_segment.delimitter)?;
+        if keyword_value_pair.0 != "" {
+            text_segment.keywords.push(keyword_value_pair.0);
+            //text_segment.values(keyword_value_pair.0, keyword_value_pair.1);
+        }
     }
-
     Ok(text_segment)
 }
 
-/*
-pub fn read_data(start: i32, end: i32) -> [f64] {
-    println!("{} {}", start, end);
-    let data = [0.0, 0.0];
+fn clean_keyword_value_pair(keyword: Vec<u8>, value: Vec<u8>, delimiter: u8) -> Result<(String, String), io::Error> {
+    // check that last byte in keyword and value are delimiter character
+    // FIXME: change this panic to a custom error type
+    if keyword[keyword.len()-1] != delimiter || value[value.len()-1] != delimiter {
+        panic!("File or parser may be corrupted")
+    }
+    // convert u8 vector to lossy utf8 string
+    let keyword_lossy_str = str::from_utf8(&keyword[..keyword.len()-1]);
+    let value_lossy_str = str::from_utf8(&value[..value.len()-1]);
 
-    return data
+    let keyword_valid_ascii = match keyword_lossy_str {
+        Ok(keyword_lossy_str) => keyword_lossy_str,
+        Err(_) => "",
+    };
+
+    let value_valid_ascii = match value_lossy_str {
+        Ok(keyword_lossy_str) => keyword_lossy_str,
+        Err(_) => "",
+    };
+
+    // trim leading and trailing whitespace
+    let keyword_clean = keyword_valid_ascii.trim().to_string();
+    let value_clean = value_valid_ascii.trim().to_string();
+
+    return Ok((keyword_clean, value_clean))
+}
+
+
+/*
+pub fn read_data(file: &File, data_start: u64, data_end: u64, mode: String, 
+                 data_type: String, byte_ord: String, num_params: i64, 
+                 num_events: i64) -> Result<Vec<f64>, io::Error> {
+    // create reader
+    let mut reader = BufReader::new(file);
+    // go to start of data segment
+    reader.seek(SeekFrom::Start(data_start))?;
+
+    // make a u8 vector with capcity of data segment
+    let buffer_capacity = data_end - data_start + 1;
+    // initialize buffer
+    let mut buffer: Vec<u8> = Vec::with_capacity(buffer_capacity as usize);
+    // check that mode is not "L"
+    if mode != String::from("L") {
+        panic!("Only list mode supported as data mode");
+    }
+
+    // get the len of data
+    let data_len: i64 = num_params * num_events;
+    // read to buffer
+    reader.read_exact(&mut buffer)?;
+    let mut data = buffer.as_slice();
+
+    match data_type.as_str() {
+        "A" => panic!("ASCII type is deprecated in FCS 3.1"),
+        "D" => {
+            let data: Vec<f64> = vec![0.0; data_len as usize]; // make data vec with np*ne elements
+            
+        },
+        "F" => {
+            let data: Vec<f32> = vec![0.0, data_len as f32];
+        },
+        "I" => {
+            panic!("Unimplemented I data type");
+        }
+    }
+
+    Ok(data)
 }
 */
+
 
 /*
 pub fn read_analysis(start: i32, end: i32) -> &'static Analysis {

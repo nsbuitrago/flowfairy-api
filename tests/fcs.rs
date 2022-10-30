@@ -1,6 +1,5 @@
-use flowfairy_api::{read_header, read_metadata};
-use std::collections::HashMap;
-use std::io;
+use flowfairy_api::{read_header, read_metadata, read_data};
+use std::io::{self, BufReader};
 use std::fs::File;
 use std::str;
 
@@ -8,11 +7,13 @@ const FORMAT_3_1_TESTFILE: &str = "/Users/nsbuitrago/Dev/flowfairy-api/tests/for
 // const FORMAT_2_1_TESTFILE: &str = "Users/nsbuitrago/Dev/flowfairy-api-tests/format_2_1.fcs";
 
 #[test]
-pub fn test_fcs_reader() -> Result<(), io::Error>{
+pub fn test_fcs_header_reader() -> Result<(), io::Error>{
     let file = File::open(&FORMAT_3_1_TESTFILE)?;
+    let mut reader = BufReader::new(file);
+
     
     // read FCS 3.1 header
-    let header = read_header(&file)?;
+    let header = read_header(&mut reader)?;
     assert_eq!(header.fcs_version, "FCS3.1");
     assert_eq!(header.txt_start, 64);
     assert_eq!(header.txt_end, 8255);
@@ -20,8 +21,16 @@ pub fn test_fcs_reader() -> Result<(), io::Error>{
     assert_eq!(header.data_end, 445255);
     assert_eq!(header.analysis_start, 0);
     assert_eq!(header.analysis_end, 0);
+    Ok(())
+}
+
+#[test]
+pub fn test_fcs_metadata_reader() -> Result<(), io::Error> {
+    let file = File::open(&FORMAT_3_1_TESTFILE)?;
+    let mut reader = BufReader::new(file);
+    let header = read_header(&mut reader)?;
     // read FCS 3.1 txt segment
-    let text_segment = read_metadata(&file, header.txt_start, header.txt_end)?;
+    let metadata = read_metadata(&mut reader, header.txt_start, header.txt_end)?;
     let keywords = vec![
         "$BEGINANALYSIS", "$ENDANALYSIS", "$BEGINSTEXT", "$ENDSTEXT", 
         "$BEGINDATA", "$ENDDATA", "$MODE", "$DATATYPE", 
@@ -39,7 +48,22 @@ pub fn test_fcs_reader() -> Result<(), io::Error>{
         "$BTIM", "$ETIM", "$SPILLOVER", "$CYT", 
         "$CYTSN", "$DATE", "$FIL", "$TIMESTEP", "$TR"
     ];
-    assert_eq!(text_segment.keywords, keywords);
+
+    assert_eq!(metadata.keywords, keywords);
     Ok(())
 }
+
+#[test]
+pub fn test_fcs_reader() -> Result<(), io::Error> {
+    let file = File::open(&FORMAT_3_1_TESTFILE)?;
+    let mut reader = BufReader::new(file);
+    let header = read_header(&mut reader)?;
+    let metadata = read_metadata(&mut reader, header.txt_start, header.txt_end)?;
+    let data = read_data(&mut reader, metadata)?;
+   
+    assert_eq!(data[0], 0.0);
+
+    Ok(())
+}
+
 

@@ -59,7 +59,7 @@ pub fn test_fcs_reader() -> Result<(), io::Error> {
     let mut reader = BufReader::new(file);
     let header = read_header(&mut reader)?;
     let metadata = read_metadata(&mut reader, header.txt_start, header.txt_end)?;
-    let data = read_data(&mut reader, metadata)?;
+    let data = read_data(&mut reader, &metadata)?;
    
     assert_eq!(data[0], 0.0);
 

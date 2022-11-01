@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, BufReader, Seek, SeekFrom, BufRead};
 use std::str;
-use byteorder::{LittleEndian, ByteOrder};
 
 const REQUIRED_3_1_KEYWORDS: [&str; 16] = [
     "$BEGINANALYSIS", // byte-offset to the beginning of analysis segment
@@ -72,13 +71,6 @@ pub struct FlowData {
 /// and returns the metadata and event data.
 ///
 /// # Examples
-///
-/// ```
-/// use flowfairy_api::read_fcs;
-/// let data = read_fcs("cd8_f31.fcs");
-/// let metadata = data.metadata;
-/// let param_events = data.data;
-/// ```
 pub fn read_fcs(file_name: &str) -> Result<FlowData, io::Error> {
     let file = File::open(&file_name)?;
     let mut reader = BufReader::new(file);
@@ -242,7 +234,7 @@ pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Ve
     let num_events: usize = num_events_str.parse().unwrap();
     let start: u64 = start_str.parse().unwrap();
     let capacity = num_params * num_events;
-    let byte_order = metadata.kv.get(&"BYTEORD".to_string()).unwrap();
+    let byte_order = metadata.kv.get(&"$BYTEORD".to_string()).unwrap();
 
     if capacity == 0 {
         panic!("data has len 0");
@@ -255,12 +247,7 @@ pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Ve
     let mut data: Vec<f64> = Vec::with_capacity(capacity);
 
     match data_type.as_str() {
-        "I" => {
-            for _ in 0..capacity {
-                let bit_length = metadata.kv.get("P1B").unwrap();
-                println!("{}", bit_length);
-            }
-        },
+        // also add "I" data type
         "F" => {
             let mut buffer = [0u8; 4];
             for _ in 0..capacity {
@@ -293,7 +280,6 @@ pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Ve
         _ => panic!("Invalid data type"),
     }
 
-    
     return Ok(data)
 }
 

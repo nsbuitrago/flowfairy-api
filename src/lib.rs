@@ -40,11 +40,10 @@ pub struct Header {
     pub analysis_end: u64
 }
 
-/// Read FCS 3.1 files
+/// Read FCS files
 ///
-/// This function decodes fcs 3.1 files and returns metadata as well as
-/// parameter data
-///
+/// This function reads fcs files and returns a FlowData struct containing
+/// metadata as well as parameter event data.
 pub fn read_fcs(filename: &str) -> Result<FlowDataTemp, io::Error> {
     let file = File::open(filename)?;
     let mut reader = BufReader::new(file);
@@ -59,30 +58,8 @@ pub fn read_fcs(filename: &str) -> Result<FlowDataTemp, io::Error> {
     return Ok(flowdata)
 }
 
-fn validate_fcs_version(mut bytes: &[u8]) -> Result<String, io::Error>{
-    let valid_versions = ["FCS3.0", "FCS3.1"];
-    let fcs_version = str::from_utf8(&mut bytes)
-        .expect("Could not convert bytes to string");
-
-    if valid_versions.contains(&fcs_version) {
-        return Ok(fcs_version.to_string()) 
-    } else {
-        panic!("Warning, FCS version {} not supported", fcs_version)
-    }
-}
-
-fn validate_spaces(mut bytes: &[u8]) -> Result<String, io::Error> {
-    let spaces = str::from_utf8(&mut bytes)
-        .expect("Could not convert bytes to string");
-
-    if spaces == "    " {
-        return Ok(spaces.to_string())
-    } else {
-        panic!("Invalid number of spaces")
-    }
-}
 /// Read header segment of an fcs file
-pub fn read_header(reader: &mut BufReader<File>) -> Result<Header, io::Error> {
+fn read_header(reader: &mut BufReader<File>) -> Result<Header, io::Error> {
     let mut buffer = [0u8; 8]; 
 
     reader.read_exact(&mut buffer[..6])?;
@@ -114,9 +91,32 @@ pub fn read_header(reader: &mut BufReader<File>) -> Result<Header, io::Error> {
     return Ok(header)
 }
 
+fn validate_fcs_version(mut bytes: &[u8]) -> Result<String, io::Error>{
+    let valid_versions = ["FCS3.0", "FCS3.1"];
+    let fcs_version = str::from_utf8(&mut bytes)
+        .expect("Could not convert bytes to string");
+
+    if valid_versions.contains(&fcs_version) {
+        return Ok(fcs_version.to_string()) 
+    } else {
+        panic!("Warning, FCS version {} not supported", fcs_version)
+    }
+}
+
+fn validate_spaces(mut bytes: &[u8]) -> Result<String, io::Error> {
+    let spaces = str::from_utf8(&mut bytes)
+        .expect("Could not convert bytes to string");
+
+    if spaces == "    " {
+        return Ok(spaces.to_string())
+    } else {
+        panic!("Invalid number of spaces")
+    }
+}
+
 /// Reads text segment (metadata) from an fcs file
-/// Currently does not support keywords or values escaped by delimitter
-pub fn read_metadata(reader: &mut BufReader<File>) -> Result<Metadata, io::Error> {
+/// FIXME: Currently does not support keywords or values escaped by delimitter
+fn read_metadata(reader: &mut BufReader<File>) -> Result<Metadata, io::Error> {
     let header = read_header(reader)?;
 
     let mut metadata = Metadata::default();
@@ -132,30 +132,35 @@ pub fn read_metadata(reader: &mut BufReader<File>) -> Result<Metadata, io::Error
         reader.read_until(delimitter, &mut keyword)?;
         reader.read_until(delimitter, &mut value)?;
 
-        let keyword = str::from_utf8(&keyword[..keyword.len()-1]);
-        let value = str::from_utf8(&value[..value.len()-1]);
+        let (keyword, value) = clean_kv(&keyword, &value);
 
-        let keyword = match keyword {
-            Ok(keyword) => keyword.trim(),
-            Err(_) => ""
-        };
-
-        let value = match value {
-            Ok(value) => value.trim(),
-            Err(_) => ""
-        };
-        
         if keyword != "" {
-            metadata.keywords.push(keyword.to_string());
-            metadata.values.insert(keyword.to_string(), value.to_string());
+            metadata.keywords.push(keyword.to_owned());
+            metadata.values.insert(keyword, value);
         }
     }
     validate_metadata(&metadata);
-
     return Ok(metadata)
 }
 
+fn clean_kv(keyword: &Vec<u8>, value: &Vec<u8>) -> (String, String) {
+    let keyword = str::from_utf8(&keyword[..keyword.len()-1]);
+    let value = str::from_utf8(&value[..value.len()-1]);
+
+    let keyword = match keyword {
+        Ok(keyword) => keyword.trim(),
+        Err(_) => ""
+    };
+
+    let value = match value {
+        Ok(value) => value.trim(),
+        Err(_) => ""
+    };
+    return (keyword.to_string(), value.to_string())
+}
+
 fn validate_metadata(metadata: &Metadata) {
+    // TODO: add additional keywords that are compatable with v 3.0 and 3.1 
     let required_3_1_keywords = [
     "$BEGINANALYSIS", // byte-offset to the beginning of analysis segment
     "$BEGINDATA", // byte-offset of beginning of data segment
@@ -216,6 +221,7 @@ fn validate_metadata(metadata: &Metadata) {
     let n_digits = total_params.chars().count().to_string();
     let regex_string = r"[PR]\d{1,".to_string() + &n_digits + "}[BENRDFGLOPSTVIW]";
     let param_keywords = RegexSet::new(&[regex_string,]).unwrap();
+
     // check that all keywords are valid
     for keyword in metadata.keywords.iter() {
         if !required_3_1_keywords.contains(&keyword.as_str()) && !optional_keywords.contains(&keyword.as_str()) && !param_keywords.is_match(&keyword.as_str()) {
@@ -225,12 +231,12 @@ fn validate_metadata(metadata: &Metadata) {
 }
 
 /// Read data segment from an fcs file
-pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<f64>, io::Error> {
+fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<f64>, io::Error> {
     let data_type: &str = metadata.values.get("$DATATYPE").unwrap().as_str();
     let total_params: usize = metadata.values.get("$PAR").unwrap().parse().unwrap();
     let total_events: usize = metadata.values.get("$TOT").unwrap().parse().unwrap();
     let start_offset: u64 = metadata.values.get("$BEGINDATA").unwrap().parse().unwrap();
-    let end_offset: u64 = metadata.values.get("$ENDDATA").unwrap().parse().unwrap();
+    //let end_offset: u64 = metadata.values.get("$ENDDATA").unwrap().parse().unwrap();
     let byte_order: &str = metadata.values.get("$BYTEORD").unwrap().as_str();
     let capacity: usize = total_params * total_events;
 
@@ -243,6 +249,7 @@ pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Ve
 
     match data_type {
         "I" => {
+            // FIXME: need to do a check on this and use the parameter bit width from metadata to read
             for _ in 0..capacity {
                 let value = reader.read_i32::<LittleEndian>()?;
                 data.push(value as f64);
@@ -252,9 +259,6 @@ pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Ve
             for _ in 0..capacity {
                 if byte_order == "1,2,3,4" {
                     let value = reader.read_f32::<LittleEndian>()?;
-                    if reader.stream_position()? == end_offset {
-                        println!("stream position: {}", reader.stream_position()?);
-                    }
                     data.push(value as f64);
                 } else if byte_order == "4,3,2,1" {
                     let value = reader.read_f32::<BigEndian>()?;
@@ -264,10 +268,16 @@ pub fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Ve
         },
         "D" => {
             for _ in 0..capacity {
-                let value = reader.read_f64::<LittleEndian>()?;
-                data.push(value);
+                if byte_order == "1,2,3,4,5,6,7,8" {
+                    let value = reader.read_f64::<LittleEndian>()?;
+                    data.push(value);
+                } else if byte_order == "8,7,6,5,4,3,2,1" {
+                    let value = reader.read_f64::<BigEndian>()?;
+                    data.push(value);
+                }
             }
         },
+        // TODO: implement ASCII data type for fcs version 3.0
         _ => panic!("Invalid data type")
     }
 

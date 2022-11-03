@@ -2,7 +2,6 @@ use flowfairy_api::read_fcs;
 use std::io;
 
 const FORMAT_3_0_TESTFILE: &str = "/Users/nsbuitrago/Dev/flowfairy-api/tests/format_3_0.fcs";
-// const FORMAT_2_1_TESTFILE: &str = "Users/nsbuitrago/Dev/flowfairy-api-tests/format_2_1.fcs";
 
 #[test]
 pub fn test_fcs_3_0_reader() -> Result<(), io::Error>{
@@ -26,7 +25,8 @@ pub fn test_fcs_3_0_reader() -> Result<(), io::Error>{
     assert_eq!(flowdata.metadata.keywords, keywords);
     
     let total_events = flowdata.metadata.values.get("$TOT").unwrap().parse::<usize>().unwrap();
-    assert_eq!(total_events * 6, flowdata.data.len());
+    let total_params = flowdata.metadata.values.get("$PAR").unwrap().parse::<usize>().unwrap();
+    assert_eq!(total_events * total_params, flowdata.data.len());
     
     Ok(())
 }

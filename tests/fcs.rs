@@ -1,36 +1,14 @@
-use flowfairy_api::{read_header, read_metadata, read_data};
-use std::io::{self, BufReader};
-use std::fs::File;
-use std::str;
+use flowfairy_api::read_fcs;
+use std::io;
 
-const FORMAT_3_1_TESTFILE: &str = "/Users/nsbuitrago/Dev/flowfairy-api/tests/format_3_1.fcs";
+const FORMAT_3_0_TESTFILE: &str = "/Users/nsbuitrago/Dev/flowfairy-api/tests/format_3_0.fcs";
 // const FORMAT_2_1_TESTFILE: &str = "Users/nsbuitrago/Dev/flowfairy-api-tests/format_2_1.fcs";
 
 #[test]
-pub fn test_fcs_header_reader() -> Result<(), io::Error>{
-    let file = File::open(&FORMAT_3_1_TESTFILE)?;
-    let mut reader = BufReader::new(file);
-
-    
-    // read FCS 3.1 header
-    let header = read_header(&mut reader)?;
-    assert_eq!(header.fcs_version, "FCS3.1");
-    assert_eq!(header.txt_start, 64);
-    assert_eq!(header.txt_end, 8255);
-    assert_eq!(header.data_start, 8256);
-    assert_eq!(header.data_end, 445255);
-    assert_eq!(header.analysis_start, 0);
-    assert_eq!(header.analysis_end, 0);
-    Ok(())
-}
-
-#[test]
-pub fn test_fcs_metadata_reader() -> Result<(), io::Error> {
-    let file = File::open(&FORMAT_3_1_TESTFILE)?;
-    let mut reader = BufReader::new(file);
-    let header = read_header(&mut reader)?;
-    // read FCS 3.1 txt segment
-    let metadata = read_metadata(&mut reader, header.txt_start, header.txt_end)?;
+pub fn test_fcs_3_0_reader() -> Result<(), io::Error>{
+    // read FCS 3.0
+    let flowdata = read_fcs(FORMAT_3_0_TESTFILE)?;
+    // check metadata
     let keywords = vec![
         "$BEGINANALYSIS", "$ENDANALYSIS", "$BEGINSTEXT", "$ENDSTEXT", 
         "$BEGINDATA", "$ENDDATA", "$MODE", "$DATATYPE", 
@@ -41,28 +19,15 @@ pub fn test_fcs_metadata_reader() -> Result<(), io::Error> {
         "$P4N", "$P4B", "$P4E", "$P4R", "$P4S",
         "$P5N", "$P5B", "$P5E", "$P5R", "$P5S",
         "$P6N", "$P6B", "$P6E", "$P6R", "$P6S",
-        "$P7N", "$P7B", "$P7E", "$P7R", "$P7S", 
-        "$P8N", "$P8B", "$P8E", "$P8R", "$P8S", 
-        "$P9N", "$P9B", "$P9E", "$P9R", "$P9S", 
-        "$P10N", "$P10B", "$P10E", "$P10R", "$P10S", 
-        "$BTIM", "$ETIM", "$SPILLOVER", "$CYT", 
-        "$CYTSN", "$DATE", "$FIL", "$TIMESTEP", "$TR"
+        "$BTIM", "$ETIM", "$CYT", "$CYTSN", "$DATE", "$FIL", "$TIMESTEP",
+        "$TR"
     ];
-
-    assert_eq!(metadata.keywords, keywords);
-    Ok(())
-}
-
-#[test]
-pub fn test_fcs_reader() -> Result<(), io::Error> {
-    let file = File::open(&FORMAT_3_1_TESTFILE)?;
-    let mut reader = BufReader::new(file);
-    let header = read_header(&mut reader)?;
-    let metadata = read_metadata(&mut reader, header.txt_start, header.txt_end)?;
-    let data = read_data(&mut reader, &metadata)?;
-   
-    assert_eq!(data[0], 0.0);
-
+    assert_eq!(flowdata.metadata.version, "FCS3.0");
+    assert_eq!(flowdata.metadata.keywords, keywords);
+    
+    let total_events = flowdata.metadata.values.get("$TOT").unwrap().parse::<usize>().unwrap();
+    assert_eq!(total_events * 6, flowdata.data.len());
+    
     Ok(())
 }
 

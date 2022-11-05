@@ -7,15 +7,17 @@ use std::str;
 use byteorder::{ReadBytesExt, LittleEndian, BigEndian};
 use regex::RegexSet;
 
-struct FlowData {
-    metadata: Metadata,
-    data: Vec<Parameter>
+pub struct FlowData {
+    pub metadata: Metadata,
+    pub data: Vec<Parameter>
 }
 
+/*
 pub struct FlowDataTemp {
     pub metadata: Metadata,
     pub data: Vec<f64>
 }
+*/
 
 #[derive(Debug, Clone, Default)]
 pub struct Metadata {
@@ -25,9 +27,9 @@ pub struct Metadata {
     pub values: HashMap<String, String>
 }
 
-struct Parameter {
-    id: String,
-    events: Vec<f64>
+pub struct Parameter {
+    pub id: String,
+    pub events: Vec<f64>
 }
 
 pub struct Header {
@@ -44,13 +46,13 @@ pub struct Header {
 ///
 /// This function reads fcs files and returns a FlowData struct containing
 /// metadata as well as parameter event data.
-pub fn read_fcs(filename: &str) -> Result<FlowDataTemp, io::Error> {
+pub fn read_fcs(filename: &str) -> Result<FlowData, io::Error> {
     let file = File::open(filename)?;
     let mut reader = BufReader::new(file);
     let metadata = read_metadata(&mut reader)?;
     let data = read_data(&mut reader, &metadata)?; // read data segment
 
-    let flowdata = FlowDataTemp{
+    let flowdata = FlowData{
         metadata: metadata,
         data: data
     };
@@ -231,7 +233,7 @@ fn validate_metadata(metadata: &Metadata) {
 }
 
 /// Read data segment from an fcs file
-fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<f64>, io::Error> {
+fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<Parameter>, io::Error> {
     let data_type: &str = metadata.values.get("$DATATYPE").unwrap().as_str();
     let total_params: usize = metadata.values.get("$PAR").unwrap().parse().unwrap();
     let total_events: usize = metadata.values.get("$TOT").unwrap().parse().unwrap();
@@ -281,7 +283,27 @@ fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<f6
         _ => panic!("Invalid data type")
     }
 
-    return Ok(data)
+    // once we have data, let's assign events to a parameter
+    // get all parameter names in order (P1N, P2N, etc)
+    let mut parameter_events: Vec<Parameter> = Vec::new();
+    for i in 0..total_params {
+        let param_keyword = format!("$P{}N", i+1);
+        let id = metadata.values.get(&param_keyword).unwrap().to_owned();
+        let mut events: Vec<f64> = Vec::new();
+
+        for j in 0..total_events {
+            let index = i * total_events + j;
+            events.push(data[index]);
+        }
+
+        let param = Parameter{
+            id,
+            events
+        };
+        parameter_events.push(param);
+    }
+
+    return Ok(parameter_events)
 }
 
 

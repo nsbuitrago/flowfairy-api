@@ -7,18 +7,63 @@ use std::str;
 use byteorder::{ReadBytesExt, LittleEndian, BigEndian};
 use regex::RegexSet;
 
+const REQUIRED_KEYWORDS: [&str; 12] = [
+    "$BEGINANALYSIS", // byte-offset to the beginning of analysis segment
+    "$BEGINDATA", // byte-offset of beginning of data segment
+    "$BEGINSTEXT", // byte-offset to beginning of text segment
+    "$BYTEORD", // byte order for data acquisition computer
+    "$DATATYPE", // type of data in data segment (ASCII, int, float)
+    "$ENDANALYSIS", // byte-offset to end of analysis segment
+    "$ENDDATA", // byte-offset to end of data segment
+    "$ENDSTEXT", // byte-offset to end of text segment
+    "$MODE", // data mode (list mode - preferred, histogram - deprecated)
+    "$NEXTDATA", // byte-offset to next data set in the file
+    "$PAR", // number of parameters in an event
+    "$TOT" // total number of events in the data set
+];
+
+const OPTIONAL_KEYWORDS: [&str; 31] = [
+    "$ABRT", // events lost due to acquisition electronic coincidence
+    "$BTIM", // clock time at beginning of data acquisition
+    "$CELLS", // description of objects measured
+    "$COM", // comment
+    "$CSMODE", // cell subset mode, number of subsets an object may belong
+    "$CSVBITS", // number of bits used to encode cell subset identifier
+    "$CYT", // cytometer type
+    "$CYTSN", // cytometer serial number
+    "$DATE", // date of data acquisition
+    "$ETIM", // clock time at end of data acquisition
+    "$EXP", // investigator name initiating experiment
+    "$FIL", // name of data file containing data set
+    "$GATE", // number of gating parameters
+    "$GATING", // region combinations used for gating
+    "$INST", // institution where data was acquired
+    "$LAST_MODIFIED", // timestamp of last modification
+    "$LAST_MODIFIER", // person performing last modification
+    "$LOST", // number events lost due to computer busy
+    "$OP", // name of flow cytometry operator
+    "$ORIGINALITY", // information whether FCS data set has been modified or not
+    "$PLATEID", // plate identifier
+    "$PLATENAME", // plate name
+    "$PROJ", // project name
+    "$SMNO", // specimen (i.e., tube) label
+    "$SPILLOVER", // spillover matrix
+    "$SRC", // source of specimen (cell type, name, etc.)
+    "$SYS", // type of computer and OS
+    "$TIMESTEP", // time step for time parameter
+    "$TR", // trigger paramter and its threshold
+    "$VOL", // volume of sample run during data acquisition
+    "$WELLID" // well identifier
+];
+
+/// FlowData struct containing metadata and parameter event data read from an FCS file.
 pub struct FlowData {
     pub metadata: Metadata,
     pub data: Vec<Parameter>
 }
 
-/*
-pub struct FlowDataTemp {
-    pub metadata: Metadata,
-    pub data: Vec<f64>
-}
-*/
-
+/// Metadata containing the FCS file version carried over from the Header struct, 
+/// delimitter for the text segment, keywords, and values from the text segment of an FCS file.
 #[derive(Debug, Clone, Default)]
 pub struct Metadata {
     pub version: String,
@@ -27,11 +72,13 @@ pub struct Metadata {
     pub values: HashMap<String, String>
 }
 
+/// Parameter struct containing the parameter id (name) and its corresponding event data.
 pub struct Parameter {
     pub id: String,
     pub events: Vec<f64>
 }
 
+/// Header struct containing the FCS file version and byte offsets to data segements in an FCS file.
 pub struct Header {
     pub version: String,
     pub txt_start: u64,
@@ -93,6 +140,7 @@ fn read_header(reader: &mut BufReader<File>) -> Result<Header, io::Error> {
     return Ok(header)
 }
 
+// Check that read FCS version is supported
 fn validate_fcs_version(mut bytes: &[u8]) -> Result<String, io::Error>{
     let valid_versions = ["FCS3.0", "FCS3.1"];
     let fcs_version = str::from_utf8(&mut bytes)
@@ -105,6 +153,7 @@ fn validate_fcs_version(mut bytes: &[u8]) -> Result<String, io::Error>{
     }
 }
 
+// Check that the correct spacing is found in between the FCS version and byte offsets in the text segment
 fn validate_spaces(mut bytes: &[u8]) -> Result<String, io::Error> {
     let spaces = str::from_utf8(&mut bytes)
         .expect("Could not convert bytes to string");
@@ -116,7 +165,7 @@ fn validate_spaces(mut bytes: &[u8]) -> Result<String, io::Error> {
     }
 }
 
-/// Reads text segment (metadata) from an fcs file
+/// Reads text segment of an fcs file
 /// FIXME: Currently does not support keywords or values escaped by delimitter
 fn read_metadata(reader: &mut BufReader<File>) -> Result<Metadata, io::Error> {
     let header = read_header(reader)?;
@@ -145,6 +194,7 @@ fn read_metadata(reader: &mut BufReader<File>) -> Result<Metadata, io::Error> {
     return Ok(metadata)
 }
 
+// Convert keyword and value byte arrays to strings, trim whitespace, and remove delimitter
 fn clean_kv(keyword: &Vec<u8>, value: &Vec<u8>) -> (String, String) {
     let keyword = str::from_utf8(&keyword[..keyword.len()-1]);
     let value = str::from_utf8(&value[..value.len()-1]);
@@ -161,59 +211,12 @@ fn clean_kv(keyword: &Vec<u8>, value: &Vec<u8>) -> (String, String) {
     return (keyword.to_string(), value.to_string())
 }
 
+// Validate that all read keywords are valid and that all required keywords are present
 fn validate_metadata(metadata: &Metadata) {
-    // TODO: add additional keywords that are compatable with v 3.0 and 3.1 
-    let required_3_1_keywords = [
-    "$BEGINANALYSIS", // byte-offset to the beginning of analysis segment
-    "$BEGINDATA", // byte-offset of beginning of data segment
-    "$BEGINSTEXT", // byte-offset to beginning of text segment
-    "$BYTEORD", // byte order for data acquisition computer
-    "$DATATYPE", // type of data in data segment (ASCII, int, float)
-    "$ENDANALYSIS", // byte-offset to end of analysis segment
-    "$ENDDATA", // byte-offset to end of data segment
-    "$ENDSTEXT", // byte-offset to end of text segment
-    "$MODE", // data mode (list mode - preferred, histogram - deprecated)
-    "$NEXTDATA", // byte-offset to next data set in the file
-    "$PAR", // number of parameters in an event
-    "$TOT" // total number of events in the data set
-    ];
-
-    let optional_keywords = [
-    "$ABRT", // events lost due to acquisition electronic coincidence
-    "$BTIM", // clock time at beginning of data acquisition
-    "$CELLS", // description of objects measured
-    "$COM", // comment
-    "$CSMODE", // cell subset mode, number of subsets an object may belong
-    "$CSVBITS", // number of bits used to encode cell subset identifier
-    "$CYT", // cytometer type
-    "$CYTSN", // cytometer serial number
-    "$DATE", // date of data acquisition
-    "$ETIM", // clock time at end of data acquisition
-    "$EXP", // investigator name initiating experiment
-    "$FIL", // name of data file containing data set
-    "$GATE", // number of gating parameters
-    "$GATING", // region combinations used for gating
-    "$INST", // institution where data was acquired
-    "$LAST_MODIFIED", // timestamp of last modification
-    "$LAST_MODIFIER", // person performing last modification
-    "$LOST", // number events lost due to computer busy
-    "$OP", // name of flow cytometry operator
-    "$ORIGINALITY", // information whether FCS data set has been modified or not
-    "$PLATEID", // plate identifier
-    "$PLATENAME", // plate name
-    "$PROJ", // project name
-    "$SMNO", // specimen (i.e., tube) label
-    "$SPILLOVER", // spillover matrix
-    "$SRC", // source of specimen (cell type, name, etc.)
-    "$SYS", // type of computer and OS
-    "$TIMESTEP", // time step for time parameter
-    "$TR", // trigger paramter and its threshold
-    "$VOL", // volume of sample run during data acquisition
-    "$WELLID" // well identifier
-    ];
 
     // check that all required keywords are present
-    for keyword in required_3_1_keywords.iter() {
+    for keyword in REQUIRED_KEYWORDS.iter() {
+        // also check parameter specific required keywords
         if !metadata.keywords.contains(&keyword.to_string()) {
             panic!("Required keyword {} is missing", keyword);
         }
@@ -226,7 +229,7 @@ fn validate_metadata(metadata: &Metadata) {
 
     // check that all keywords are valid
     for keyword in metadata.keywords.iter() {
-        if !required_3_1_keywords.contains(&keyword.as_str()) && !optional_keywords.contains(&keyword.as_str()) && !param_keywords.is_match(&keyword.as_str()) {
+        if !REQUIRED_KEYWORDS.contains(&keyword.as_str()) && !OPTIONAL_KEYWORDS.contains(&keyword.as_str()) && !param_keywords.is_match(&keyword.as_str()) {
             panic!("Keyword {} is not a valid keyword", keyword);
         }
     }
@@ -234,6 +237,12 @@ fn validate_metadata(metadata: &Metadata) {
 
 /// Read data segment from an fcs file
 fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<Parameter>, io::Error> {
+    let data_mode: &str = metadata.values.get("$MODE").unwrap();
+    // FIXME: add error handling here
+    if data_mode != "L" {
+        panic!("Data mode {} not supported", data_mode);
+    }
+
     let data_type: &str = metadata.values.get("$DATATYPE").unwrap().as_str();
     let total_params: usize = metadata.values.get("$PAR").unwrap().parse().unwrap();
     let total_events: usize = metadata.values.get("$TOT").unwrap().parse().unwrap();
@@ -251,7 +260,7 @@ fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<Pa
 
     match data_type {
         "I" => {
-            // FIXME: need to do a check on this and use the parameter bit width from metadata to read
+            // 
             for _ in 0..capacity {
                 let value = reader.read_i32::<LittleEndian>()?;
                 data.push(value as f64);
@@ -279,7 +288,6 @@ fn read_data(reader: &mut BufReader<File>, metadata: &Metadata) -> Result<Vec<Pa
                 }
             }
         },
-        // TODO: implement ASCII data type for fcs version 3.0
         _ => panic!("Invalid data type")
     }
 
